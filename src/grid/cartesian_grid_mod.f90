@@ -1,5 +1,8 @@
 !> @file cartesian_grid_mod.f90
 !> Regular Cartesian (rectangular) grid with uniform spacing.
+
+!> Simple and easy.
+
 module cartesian_grid_mod
   use constants_mod,  only: dp
   use grid_mod,       only: GridBase
@@ -27,17 +30,17 @@ contains
 
     grid%nx = params%nx
     grid%ny = params%ny
-    grid%dx = (params%x_max - params%x_min) / real(params%nx, dp)
-    grid%dy = (params%y_max - params%y_min) / real(params%ny, dp)
+    grid%dx = params%dx
+    grid%dy = params%dy
 
     allocate(grid%x(params%nx))
     allocate(grid%y(params%ny))
 
     do i = 1, params%nx
-      grid%x(i) = params%x_min + (real(i, dp) - 0.5_dp) * grid%dx
+      grid%x(i) = real(i - 1, dp) * grid%dx
     end do
     do j = 1, params%ny
-      grid%y(j) = params%y_min + (real(j, dp) - 0.5_dp) * grid%dy
+      grid%y(j) = real(j - 1, dp) * grid%dy
     end do
   end subroutine build_cartesian_grid
 

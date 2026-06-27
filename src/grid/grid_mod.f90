@@ -1,6 +1,7 @@
 !> @file grid_mod.f90
-!> Abstract grid interface.  Concrete implementations (Cartesian, …) extend
-!> this module.
+!> Abstract grid interface.
+!> To be extenden for different grid types
+
 module grid_mod
   use constants_mod, only: dp
   implicit none

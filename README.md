@@ -6,6 +6,30 @@ lightweight visualisation front-ends.
 
 ---
 
+## Equations
+
+Derived from conservation of mass:
+
+\begin{equation}
+\frac {\delta \rho}{\delta t} + \nabla \dot (\rho v) = 0
+\end{equation}
+
+rho: density, v: velocity vector (u,v,w)
+
+Derived from conservation of momentum:
+
+\begin{equation}
+\frac{\delta}{delta t}(\rho v) + \nabla \dot (\rho v \rot v + pl) = \rho g
+
+
+### Simplified form:
+
+\begin{equation}
+\frac{\delta h}{\delta t} + H (\frac{\delta u}{\delta x}+\frac{\delta v}{\delta y}) = 0
+\frac{\delta u}{\delta t} - fv = -g \frac{\delta h}{\delta x} - ku
+\frac{\delta v}{\delta t} + fu = -g \frac{\delta h}{\delta y} - kv
+\end{equation}
+
 ## Directory structure
 
 ```
@@ -59,9 +83,34 @@ The solver binary is written to `build/shallow_water`.
 
 # Custom namelist configuration
 ./build/shallow_water examples/flat_bottom/config.nml
+
+# Use the repository template (edit nx/ny, dx/dy, etc.)
+./build/shallow_water sim_params.nml
 ```
 
 Output CSV files are written to `output/` by default.
+
+The solver grid is defined by `nx`, `ny`, `dx`, and `dy` from the namelist.
+`x_min` and `y_min` are fixed at `0.0`; `x_max` and `y_max` are derived from
+`nx*dx` and `ny*dy`. `t_start` is fixed at `0.0`.
+
+## Numerics selection
+
+The namelist also controls the numerical method with two integer switches:
+
+| Parameter | Value | Meaning |
+|-----------|-------|---------|
+| `discretization_scheme` | `1` | Central differences |
+| `discretization_scheme` | `2` | Rusanov (local Lax-Friedrichs) flux |
+| `time_integration_scheme` | `1` | Forward Euler |
+| `time_integration_scheme` | `2` | Classical RK4 |
+
+Example:
+
+```nml
+discretization_scheme   = 2
+time_integration_scheme = 2
+```
 
 ## Visualisation
 

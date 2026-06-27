@@ -14,7 +14,8 @@ program main
   use terrain_mod,         only: init_terrain_flat
   use shallow_water_mod,   only: SWEState, allocate_state, deallocate_state
   use euler_mod,           only: euler_step
-  use output_mod,          only: write_csv
+  use runge_kutta_mod,     only: rk4_step
+  use output_mod,          only: write_netcdf, close_netcdf_writer
   implicit none
 
   type(SimParams)     :: params
@@ -62,15 +63,23 @@ program main
     ! Clamp last step
     if (t + params%dt > params%t_end) params%dt = params%t_end - t
 
-    call euler_step(state, b, grid%dx, grid%dy, params%dt)
+    select case (params%time_integration_scheme)
+    case (1)
+      call euler_step(state, b, grid%dx, grid%dy, params%dt, params%discretization_scheme)
+    case (2)
+      call rk4_step(state, b, grid%dx, grid%dy, params%dt, params%discretization_scheme)
+    case default
+      write(*,'(A,I0)') '[main] Error: unknown time integration scheme: ', params%time_integration_scheme
+      error stop
+    end select
 
     t    = t    + params%dt
     step = step + 1
 
     do_output = (mod(step, params%output_freq) == 0)
     if (do_output) then
-      call write_csv(state, grid%x, grid%y, step, &
-                     trim(params%output_dir), 'swe')
+      call write_netcdf(state, grid%x, grid%y, step, t, params%max_time_steps_per_file, &
+                        trim(params%output_dir), 'swe')
       write(*,'(A,I6,A,F10.3)') '[main] step ', step, '  t = ', t
     end if
   end do
@@ -78,6 +87,7 @@ program main
   write(*,'(A)') '[main] Simulation complete.'
 
   ! ---- Clean up -----------------------------------------------------------
+  call close_netcdf_writer()
   call deallocate_state(state)
   call destroy_cartesian_grid(grid)
   deallocate(b)

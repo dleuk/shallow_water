@@ -14,14 +14,15 @@ contains
   !> Advance the SWE state by one time step using the forward Euler method.
   !>
   !>   U^{n+1} = U^n + dt * RHS(U^n)
-  subroutine euler_step(state, b, dx, dy, dt)
+  subroutine euler_step(state, b, dx, dy, dt, discretization_scheme)
     type(SWEState), intent(inout) :: state
     real(dp),       intent(in)    :: b(:,:)
     real(dp),       intent(in)    :: dx, dy, dt
+    integer,        intent(in)    :: discretization_scheme
 
     type(SWEState) :: rhs
 
-    call compute_rhs(rhs, state, b, dx, dy)
+    call compute_rhs(rhs, state, b, dx, dy, discretization_scheme)
 
     state%h  = state%h  + dt * rhs%h
     state%hu = state%hu + dt * rhs%hu

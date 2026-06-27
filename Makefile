@@ -8,8 +8,38 @@
 #   make clean     – remove build artefacts
 # =============================================================================
 
-FC      := gfortran
 FCFLAGS := -O2 -Wall -Wextra -Wno-unused-dummy-argument -std=f2008 -fcheck=all -g
+NETCDF_FCFLAGS ?=
+NETCDF_LIBS ?= -lnetcdff -lnetcdf
+
+# OS-specific command helpers
+ifeq ($(OS),Windows_NT)
+EXE_EXT := .exe
+MKDIR_P = if not exist "$(subst /,\,$1)" mkdir "$(subst /,\,$1)"
+RM_RF = if exist "$(subst /,\,$1)" rmdir /S /Q "$(subst /,\,$1)"
+FC ?= gfortran
+MSYS2_BIN_DIR := $(firstword $(wildcard C:/msys64/ucrt64/bin) $(wildcard C:/msys64/mingw64/bin))
+ifneq ($(MSYS2_BIN_DIR),)
+export PATH := $(MSYS2_BIN_DIR);$(PATH)
+endif
+FC_CANDIDATES := $(strip $(wildcard C:/msys64/ucrt64/bin/gfortran.exe) $(wildcard C:/msys64/mingw64/bin/gfortran.exe))
+ifneq (,$(findstring /,$(FC))$(findstring \,$(FC)))
+FC_PATH := $(strip $(wildcard $(FC)))
+else ifneq ($(FC_CANDIDATES),)
+FC_PATH := $(firstword $(FC_CANDIDATES))
+else
+FC_PATH := $(strip $(shell where $(FC) 2>NUL))
+endif
+ifneq ($(FC_PATH),)
+FC := $(firstword $(FC_PATH))
+endif
+else
+FC ?= gfortran
+EXE_EXT :=
+MKDIR_P = mkdir -p "$1"
+RM_RF = rm -rf "$1"
+FC_PATH := $(strip $(shell command -v $(FC) 2>/dev/null))
+endif
 
 # Directories
 SRCDIR  := src
@@ -21,7 +51,7 @@ OUTDIR  := output
 MODDIR  := $(BUILDDIR)/mod
 
 # Compiler flags with module directory
-FFLAGS  := $(FCFLAGS) -I$(MODDIR) -J$(MODDIR)
+FFLAGS  := $(FCFLAGS) $(NETCDF_FCFLAGS) -I$(MODDIR) -J$(MODDIR)
 
 # =============================================================================
 # Source files – ORDER MATTERS: modules must be compiled before dependents
@@ -79,34 +109,45 @@ LIB_OBJS := $(filter-out $(BUILDDIR)/main.o,$(OBJS))
 # =============================================================================
 # Targets
 # =============================================================================
-.PHONY: all tests clean dirs
 
-all: dirs $(BUILDDIR)/shallow_water
-	@echo "Build complete: $(BUILDDIR)/shallow_water"
+.PHONY: all tests clean dirs check_fc
+
+all: check_fc dirs $(BUILDDIR)/shallow_water$(EXE_EXT)
+	@echo "Build complete: $(BUILDDIR)/shallow_water$(EXE_EXT)"
+
+check_fc:
+ifeq ($(FC_PATH),)
+	$(error [make] Error: compiler '$(FC)' not found in PATH. Install gfortran and ensure it is available in your shell.)
+endif
 
 dirs:
-	@mkdir -p $(MODDIR) $(OUTDIR)
-	@mkdir -p $(BUILDDIR)/utils $(BUILDDIR)/grid $(BUILDDIR)/terrain \
-	          $(BUILDDIR)/equations $(BUILDDIR)/numerics $(BUILDDIR)/io
-	@mkdir -p $(BUILDDIR)/test
+	@$(call MKDIR_P,$(MODDIR))
+	@$(call MKDIR_P,$(OUTDIR))
+	@$(call MKDIR_P,$(BUILDDIR)/utils)
+	@$(call MKDIR_P,$(BUILDDIR)/grid)
+	@$(call MKDIR_P,$(BUILDDIR)/terrain)
+	@$(call MKDIR_P,$(BUILDDIR)/equations)
+	@$(call MKDIR_P,$(BUILDDIR)/numerics)
+	@$(call MKDIR_P,$(BUILDDIR)/io)
+	@$(call MKDIR_P,$(BUILDDIR)/test)
 
 # Link solver executable
-$(BUILDDIR)/shallow_water: $(OBJS)
-	$(FC) $(FCFLAGS) -o $@ $^
+$(BUILDDIR)/shallow_water$(EXE_EXT): $(OBJS)
+	$(FC) $(FCFLAGS) -o $@ $^ $(NETCDF_LIBS)
 
 # Compile solver source files
 $(BUILDDIR)/%.o: $(SRCDIR)/%.f90
 	$(FC) $(FFLAGS) -c $< -o $@
 
 # Build and run tests
-tests: dirs $(BUILDDIR)/test/test_runner
+tests: check_fc dirs $(BUILDDIR)/test/test_runner$(EXE_EXT)
 	@echo "--- Running tests ---"
-	@$(BUILDDIR)/test/test_runner
+	@$(BUILDDIR)/test/test_runner$(EXE_EXT)
 	@echo "--- Tests done ------"
 
 # Link test executable (link against lib objects + test objects)
-$(BUILDDIR)/test/test_runner: $(LIB_OBJS) $(TEST_OBJS)
-	$(FC) $(FCFLAGS) -o $@ $^
+$(BUILDDIR)/test/test_runner$(EXE_EXT): $(LIB_OBJS) $(TEST_OBJS)
+	$(FC) $(FCFLAGS) -o $@ $^ $(NETCDF_LIBS)
 
 # Compile test source files
 $(BUILDDIR)/test/%.o: $(TESTDIR)/%.f90
@@ -116,5 +157,5 @@ $(BUILDDIR)/test/%.o: $(TESTDIR)/%.f90
 # Clean
 # =============================================================================
 clean:
-	rm -rf $(BUILDDIR)
+	@$(call RM_RF,$(BUILDDIR))
 	@echo "Clean complete."

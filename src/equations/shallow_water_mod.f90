@@ -48,14 +48,46 @@ contains
     if (allocated(state%hv)) deallocate(state%hv)
   end subroutine deallocate_state
 
-  !> Compute the RHS of the SWE using simple central differences.
-  !> This is a placeholder; production code should use a proper
-  !> Riemann-solver-based flux (see flux_mod.f90).
-  subroutine compute_rhs(rhs, state, b, dx, dy)
+  !> Compute the RHS of the SWE.
+  !> scheme = 1: central differences
+  !> scheme = 2: Rusanov (local Lax-Friedrichs) fluxes
+  subroutine compute_rhs(rhs, state, b, dx, dy, scheme)
     type(SWEState), intent(out) :: rhs      !< Tendencies d/dt(h, hu, hv)
     type(SWEState), intent(in)  :: state    !< Current state
     real(dp),       intent(in)  :: b(:,:)   !< Bed elevation (m)
     real(dp),       intent(in)  :: dx, dy   !< Grid spacing  (m)
+    integer, intent(in), optional :: scheme
+    integer :: nx, ny, i, j, rhs_scheme
+    real(dp) :: dFhx, dFhvy, dGhux, dGhvy
+    real(dp) :: dFhux, dGhuy
+    real(dp) :: src_u, src_v, h_ij
+    real(dp) :: fL_h, fL_hu, fL_hv, fR_h, fR_hu, fR_hv
+    real(dp) :: gB_h, gB_hu, gB_hv, gT_h, gT_hu, gT_hv
+
+    nx = size(state%h, 1)
+    ny = size(state%h, 2)
+    rhs_scheme = 1
+    if (present(scheme)) rhs_scheme = scheme
+
+    call allocate_state(rhs, nx, ny)
+
+    select case (rhs_scheme)
+    case (1)
+      call compute_rhs_central(rhs, state, b, dx, dy)
+    case (2)
+      call compute_rhs_rusanov(rhs, state, b, dx, dy)
+    case default
+      write(*,'(A,I0)') '[rhs] Warning: unknown discretization scheme; using 1 = central differences: ', rhs_scheme
+      call compute_rhs_central(rhs, state, b, dx, dy)
+    end select
+  end subroutine compute_rhs
+
+  !> Compute RHS using central differences.
+  subroutine compute_rhs_central(rhs, state, b, dx, dy)
+    type(SWEState), intent(out) :: rhs
+    type(SWEState), intent(in)  :: state
+    real(dp),       intent(in)  :: b(:,:)
+    real(dp),       intent(in)  :: dx, dy
     integer :: nx, ny, i, j
     real(dp) :: dFhx, dFhvy, dGhux, dGhvy
     real(dp) :: dFhux, dGhuy
@@ -63,8 +95,6 @@ contains
 
     nx = size(state%h, 1)
     ny = size(state%h, 2)
-
-    call allocate_state(rhs, nx, ny)
 
     do j = 2, ny - 1
       do i = 2, nx - 1
@@ -98,6 +128,92 @@ contains
         rhs%hv(i,j) = -dGhux - dGhvy + src_v
       end do
     end do
-  end subroutine compute_rhs
+
+  end subroutine compute_rhs_central
+
+  !> Compute RHS using Rusanov (local Lax-Friedrichs) fluxes.
+  subroutine compute_rhs_rusanov(rhs, state, b, dx, dy)
+    type(SWEState), intent(out) :: rhs
+    type(SWEState), intent(in)  :: state
+    real(dp),       intent(in)  :: b(:,:)
+    real(dp),       intent(in)  :: dx, dy
+    integer :: nx, ny, i, j
+    real(dp) :: fL_h, fL_hu, fL_hv, fR_h, fR_hu, fR_hv
+    real(dp) :: gB_h, gB_hu, gB_hv, gT_h, gT_hu, gT_hv
+    real(dp) :: src_u, src_v, h_ij
+
+    nx = size(state%h, 1)
+    ny = size(state%h, 2)
+
+    do j = 2, ny - 1
+      do i = 2, nx - 1
+        h_ij = state%h(i,j)
+
+        call rusanov_flux_x(fL_h, fL_hu, fL_hv, state, i-1, j)
+        call rusanov_flux_x(fR_h, fR_hu, fR_hv, state, i,   j)
+        call rusanov_flux_y(gB_h, gB_hu, gB_hv, state, i, j-1)
+        call rusanov_flux_y(gT_h, gT_hu, gT_hv, state, i, j)
+
+        rhs%h(i,j)  = -((fR_h  - fL_h ) / dx + (gT_h  - gB_h ) / dy)
+        rhs%hu(i,j) = -((fR_hu - fL_hu) / dx + (gT_hu - gB_hu) / dy)
+        rhs%hv(i,j) = -((fR_hv - fL_hv) / dx + (gT_hv - gB_hv) / dy)
+
+        src_u = -GRAVITY * h_ij * (b(i+1,j) - b(i-1,j)) / (2.0_dp * dx)
+        src_v = -GRAVITY * h_ij * (b(i,j+1) - b(i,j-1)) / (2.0_dp * dy)
+        rhs%hu(i,j) = rhs%hu(i,j) + src_u
+        rhs%hv(i,j) = rhs%hv(i,j) + src_v
+      end do
+    end do
+  end subroutine compute_rhs_rusanov
+
+  subroutine rusanov_flux_x(fh, fhu, fhv, state, i, j)
+    real(dp),       intent(out) :: fh, fhu, fhv
+    type(SWEState), intent(in)  :: state
+    integer,        intent(in)  :: i, j
+    real(dp) :: hL, huL, hvL, uL, cL
+    real(dp) :: hR, huR, hvR, uR, cR
+    real(dp) :: smax
+
+    hL  = state%h (i,  j);  huL = state%hu(i,  j);  hvL = state%hv(i,  j)
+    hR  = state%h (i+1,j);  huR = state%hu(i+1,j);  hvR = state%hv(i+1,j)
+
+    uL  = merge(huL / hL, 0.0_dp, hL > 0.0_dp)
+    uR  = merge(huR / hR, 0.0_dp, hR > 0.0_dp)
+    cL  = sqrt(GRAVITY * max(hL, 0.0_dp))
+    cR  = sqrt(GRAVITY * max(hR, 0.0_dp))
+
+    smax = max(abs(uL) + cL, abs(uR) + cR)
+
+    fh  = 0.5_dp * (huL + huR) - 0.5_dp * smax * (hR  - hL)
+    fhu = 0.5_dp * (huL*uL + 0.5_dp*GRAVITY*hL**2 &
+                  + huR*uR + 0.5_dp*GRAVITY*hR**2) &
+          - 0.5_dp * smax * (huR - huL)
+    fhv = 0.5_dp * (hvL*uL + hvR*uR) - 0.5_dp * smax * (hvR - hvL)
+  end subroutine rusanov_flux_x
+
+  subroutine rusanov_flux_y(fh, fhu, fhv, state, i, j)
+    real(dp),       intent(out) :: fh, fhu, fhv
+    type(SWEState), intent(in)  :: state
+    integer,        intent(in)  :: i, j
+    real(dp) :: hB, huB, hvB, vB, cB
+    real(dp) :: hT, huT, hvT, vT, cT
+    real(dp) :: smax
+
+    hB  = state%h (i,j  );  huB = state%hu(i,j  );  hvB = state%hv(i,j  )
+    hT  = state%h (i,j+1);  huT = state%hu(i,j+1);  hvT = state%hv(i,j+1)
+
+    vB  = merge(hvB / hB, 0.0_dp, hB > 0.0_dp)
+    vT  = merge(hvT / hT, 0.0_dp, hT > 0.0_dp)
+    cB  = sqrt(GRAVITY * max(hB, 0.0_dp))
+    cT  = sqrt(GRAVITY * max(hT, 0.0_dp))
+
+    smax = max(abs(vB) + cB, abs(vT) + cT)
+
+    fh  = 0.5_dp * (hvB + hvT) - 0.5_dp * smax * (hT  - hB)
+    fhu = 0.5_dp * (huB*vB + huT*vT) - 0.5_dp * smax * (huT - huB)
+    fhv = 0.5_dp * (hvB*vB + 0.5_dp*GRAVITY*hB**2 &
+                  + hvT*vT + 0.5_dp*GRAVITY*hT**2) &
+          - 0.5_dp * smax * (hvT - hvB)
+  end subroutine rusanov_flux_y
 
 end module shallow_water_mod
